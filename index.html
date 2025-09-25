@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Organoid Simulation with Functional Drug Effects</title>
+<style>
+body { margin:0; background:#111; font-family:Arial,sans-serif; color:white; }
+#controls { position:absolute; top:10px; left:10px; background: rgba(0,0,0,0.7); padding:12px; border-radius:8px; width:280px; font-size:14px; }
+select, button { width:100%; margin:5px 0; padding:6px; border-radius:5px; border:none; font-size:14px;}
+button { background:#28a745; color:white; cursor:pointer;}
+button:hover { background:#218838;}
+#status { margin-top:8px; color:#f8d210; font-size:13px; }
+canvas { display:block; margin:0 auto; background:#111; }
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <strong>3D Organoid Simulation</strong>
+  <p>Select Growth Factor:</p>
+  <select id="factorSelect" onchange="applyFactor()">
+    <option value="">-- Choose Factor --</option>
+    <option value="FGF2">FGF2 → Brain</option>
+    <option value="WNT3A">WNT3A → Intestine</option>
+    <option value="HGF">HGF → Liver</option>
+    <option value="BMP4">BMP4 → Lung</option>
+    <option value="BMP4+ActivinA">BMP4 + ActivinA → Heart</option>
+  </select>
+
+  <p>Select Drug:</p>
+  <select id="drugSelect" onchange="applyDrug()">
+    <option value="">-- Choose Drug --</option>
+  </select>
+
+  <button onclick="resetSimulation()">Reset</button>
+  <div id="status">Current: Embryonic Stem Cell</div>
+</div>
+
+<canvas id="canvas" width="500" height="500"></canvas>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const organDrugs = {
+  "Brain Organoid": ["Paclitaxel", "Doxorubicin"],
+  "Intestinal Organoid": ["5-FU", "Cisplatin"],
+  "Liver Organoid": ["Doxorubicin", "Cisplatin"],
+  "Lung Organoid": ["Remdesivir", "Cisplatin"],
+  "Heart Organoid": ["Doxorubicin"]
+};
+
+let factors = [];
+let cells = [];
+let lineage = "Stem Cell";
+let growthFactorAdded = false;
+let activeDrug = null;
+const MAX_CELLS = 600;
+
+// Cell class
+class Cell{
+  constructor(x,y,radius,color,drugEffect=null){
+    this.x=x; this.y=y; this.radius=radius; this.color=color;
+    this.vx=(Math.random()-0.5)*2; this.vy=(Math.random()-0.5)*2;
+    this.drugEffect = drugEffect; // inherit drug effect if exists
+  }
+
+  grow(){
+    // Apply drug effect
+    if(this.drugEffect){
+      if(this.drugEffect.type==="shrink") this.radius*=0.95;
+      if(this.drugEffect.type==="slow") if(Math.random()<0.7) return;
+      if(this.drugEffect.type==="kill") if(Math.random()<0.03){ this.radius=0; return;}
+    }
+
+    // Replication
+    if(growthFactorAdded && cells.length<MAX_CELLS){
+      const angle=Math.random()*2*Math.PI;
+      const dist=this.radius*1.5;
+      const nx=this.x+Math.cos(angle)*dist;
+      const ny=this.y+Math.sin(angle)*dist;
+      const newCell = new Cell(nx,ny,this.radius*0.9,this.color,this.drugEffect? {...this.drugEffect} : null);
+      cells.push(newCell);
+    }
+
+    // Attraction to center
+    const cx=canvas.width/2, cy=canvas.height/2;
+    let dx=cx-this.x, dy=cy-this.y;
+    const dist=Math.sqrt(dx*dx+dy*dy)||1;
+    this.vx+=dx/dist*0.05; this.vy+=dy/dist*0.05;
+
+    // Simple repulsion
+    for(let other of cells){
+      if(other===this) continue;
+      let dx2=this.x-other.x, dy2=this.y-other.y;
+      let d=Math.sqrt(dx2*dx2+dy2*dy2)||1;
+      if(d<this.radius*2){ this.vx+=dx2/d*0.02; this.vy+=dy2/d*0.02; }
+    }
+
+    this.vx*=0.85; this.vy*=0.85;
+    this.x+=this.vx; this.y+=this.vy;
+  }
+
+  draw(){
+    if(this.radius<=0) return;
+    ctx.beginPath();
+    ctx.arc(this.x,this.y,this.radius,0,Math.PI*2);
+    ctx.fillStyle=this.color;
+    ctx.fill();
+  }
+}
+
+// Init stem cell
+function startStemCell(){
+  cells=[new Cell(canvas.width/2,canvas.height/2,18,"#0bf")];
+  factors=[]; lineage="Stem Cell"; growthFactorAdded=false;
+  activeDrug=null;
+  document.getElementById("drugSelect").innerHTML="<option value=''>-- Choose Drug --</option>";
+  updateStatus();
+}
+
+// Apply growth factor
+function applyFactor(){
+  const factor=document.getElementById("factorSelect").value;
+  if(!factor) return;
+  factors.push(factor);
+  growthFactorAdded=true;
+
+  if(factors.includes("FGF2")) { lineage="Brain Organoid"; colorize("#9664ff"); }
+  else if(factors.includes("WNT3A")) { lineage="Intestinal Organoid"; colorize("#0f0"); }
+  else if(factors.includes("HGF")) { lineage="Liver Organoid"; colorize("#ffca00"); }
+  else if(factors.includes("BMP4") && !factors.includes("BMP4+ActivinA")) { lineage="Lung Organoid"; colorize("#aaffff"); }
+  else if(factors.includes("BMP4+ActivinA")) { lineage="Heart Organoid"; colorize("#ff6464"); }
+
+  // Populate drugs
+  const select = document.getElementById("drugSelect");
+  select.innerHTML="<option value=''>-- Choose Drug --</option>";
+  (organDrugs[lineage]||[]).forEach(d=>{
+    const opt=document.createElement("option"); opt.value=d; opt.text=d; select.appendChild(opt);
+  });
+
+  updateStatus();
+}
+
+// Color all cells
+function colorize(color){ cells.forEach(c=>c.color=color); }
+
+// Apply drug effect
+function applyDrug(){
+  const drug=document.getElementById("drugSelect").value;
+  if(!drug) return;
+  activeDrug = drug;
+
+  let effect = null;
+  if(drug==="Doxorubicin") effect={type:"shrink"};
+  else if(drug==="Cisplatin") effect={type:"slow"};
+  else if(drug==="Paclitaxel") effect={type:"slow"};
+  else if(drug==="5-FU") effect={type:"kill"};
+  else if(drug==="Remdesivir") effect={type:"slow"};
+
+  cells.forEach(c=>c.drugEffect = {...effect}); // apply effect to all cells
+
+  updateStatus();
+}
+
+function resetSimulation(){ startStemCell(); }
+
+function updateStatus(){
+  let text="Current: "+lineage;
+  if(factors.length) text+=" | Factors: "+factors.join(",");
+  if(activeDrug) text+=" | Drug: "+activeDrug;
+  document.getElementById("status").innerText=text;
+}
+
+// Animation loop
+function animate(){
+  ctx.fillStyle="rgba(0,0,0,0.15)"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  cells.forEach(c=>{ c.grow(); c.draw(); });
+  requestAnimationFrame(animate);
+}
+
+startStemCell();
+animate();
+</script>
+</body>
+</html>
